@@ -1,0 +1,34 @@
+name: Send callback to backend
+
+on:
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: 'Request ID to send in the callback'
+        required: true
+        default: 'r-1768507089118-62fyx2'
+      response_text:
+        description: 'Text to include in response.text'
+        required: false
+        default: 'resultado de teste'
+
+jobs:
+  send-callback:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send callback to backend
+        env:
+          CALLBACK_URL: ${{ secrets.CALLBACK_URL }}
+          SHARED_SECRET: ${{ secrets.SHARED_SECRET }}
+          REQUEST_ID: ${{ github.event.inputs.request_id }}
+          RESPONSE_TEXT: ${{ github.event.inputs.response_text }}
+        run: |
+          # monta o payload JSON compacto (jq -c gera string compacta)
+          PAYLOAD=$(jq -c -n --arg rid "$REQUEST_ID" --arg resp_text "$RESPONSE_TEXT" '{request_id:$rid, status:"completed", response:{text:$resp_text}}')
+          # calcula HMAC-SHA256 e converte para hex
+          SIG=$(printf '%s' "$PAYLOAD" | openssl dgst -sha256 -hmac "$SHARED_SECRET" -binary | xxd -p -c 256)
+          # envia callback com header X-Signature no formato esperado
+          curl -s -X POST "$CALLBACK_URL" \
+            -H "Content-Type: application/json" \
+            -H "X-Signature: sha256=$SIG" \
+            -d "$PAYLOAD"
