@@ -3,26 +3,33 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Chat Backend UI</title>
+  <title>Chat</title>
   <style>
     body { font-family: Arial, sans-serif; margin: 20px; }
-    #messages { border: 1px solid #ddd; padding: 10px; height: 300px; overflow:auto; }
-    .me { text-align: right; color: #0a74da; }
-    .you { text-align: left; color: #333; }
+    #messages { border: 1px solid #ddd; padding: 10px; height: 320px; overflow:auto; background:#fafafa; }
+    .me { text-align: right; color: #0a74da; margin:6px 0; }
+    .you { text-align: left; color: #333; margin:6px 0; }
+    .meta { color: #666; font-size: 0.9em; margin:6px 0; }
+    #controls { margin-top: 12px; }
+    input[type="text"] { padding:8px; font-size:14px; }
+    button { padding:8px 12px; font-size:14px; }
   </style>
 </head>
 <body>
-  <h2>Chat Backend</h2>
-  <div id="messages"></div>
-  <form id="chatForm">
-    <input id="input" placeholder="Mensagem" autocomplete="off" style="width:70%" />
-    <button type="submit">Enviar</button>
+  <h2>Chat</h2>
+
+  <div id="messages" aria-live="polite"></div>
+
+  <form id="chatForm" autocomplete="off">
+    <div id="controls">
+      <input id="input" type="text" placeholder="Digite sua mensagem" style="width:70%" />
+      <button type="submit">Enviar</button>
+    </div>
   </form>
 
   <script>
     const WS_URL = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
-    const STATUS_CHECK_URL = location.origin + '/status';
-
+    const START_URL = location.origin + '/start';
     const messages = document.getElementById('messages');
     const input = document.getElementById('input');
     const form = document.getElementById('chatForm');
@@ -35,28 +42,54 @@
       messages.scrollTop = messages.scrollHeight;
     }
 
+    // Conecta ao WebSocket
     const ws = new WebSocket(WS_URL);
-    ws.onopen = () => addMessage('Conectado ao WS', 'you');
+    ws.onopen = () => addMessage('Conectado ao servidor', 'meta');
     ws.onmessage = (e) => {
       try {
         const p = JSON.parse(e.data);
-        addMessage(JSON.stringify(p), 'you');
+        if (p.type === 'welcome') addMessage(p.message, 'meta');
+        else if (p.type === 'job_completed') addMessage('Resultado: ' + JSON.stringify(p.response), 'you');
+        else if (p.type === 'job_timeout') addMessage('Timeout: ' + (p.message || ''), 'meta');
+        else if (p.type === 'job_state') addMessage('Estado: ' + p.status, 'meta');
+        else addMessage(JSON.stringify(p), 'meta');
       } catch (err) {
-        addMessage(e.data, 'you');
+        addMessage(e.data, 'meta');
       }
     };
-    ws.onerror = (e) => addMessage('WS error', 'you');
-    ws.onclose = () => addMessage('WS fechado', 'you');
+    ws.onerror = () => addMessage('Erro no WebSocket', 'meta');
+    ws.onclose = () => addMessage('Conexão fechada', 'meta');
 
-    form.addEventListener('submit', (ev) => {
+    // Envia prompt para /start e subscreve o request_id
+    form.addEventListener('submit', async (ev) => {
       ev.preventDefault();
       const text = input.value.trim();
       if (!text) return;
-      const requestId = 'local-' + Date.now();
-      addMessage(text, 'me');
+      addMessage('Você: ' + text, 'me');
+
+      const resp = await fetch(START_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ payload: { prompt: text } })
+      }).then(r => r.json()).catch(() => null);
+
+      if (!resp || !resp.request_id) {
+        addMessage('Erro ao iniciar job', 'meta');
+        return;
+      }
+
+      const requestId = resp.request_id;
+      addMessage('Request ID: ' + requestId, 'meta');
+      addMessage('Aguarde o resultado. O processamento será decidido pelo sistema.', 'meta');
+
+      // subscreve para receber resultado via WebSocket
       ws.send(JSON.stringify({ type: 'subscribe', request_id: requestId }));
-      addMessage('Aguardando resposta para ' + requestId, 'you');
+
+      // opcional: log para debug (não exibido ao usuário)
+      console.log('callback_url:', resp.callback_url);
+
       input.value = '';
+      input.focus();
     });
   </script>
 </body>
